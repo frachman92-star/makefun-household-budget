@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HomeLedger — the Alvarez family budget</title>
+<meta name="description" content="HomeLedger keeps one household budget in one place: income, spending, category budgets, bills and savings goals, all working offline.">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="main.js"></script>
+</head>
+<body>
+<header class="site-header">
+  <div class="header-inner">
+    <a class="brand" href="#/dashboard">Home<span>Ledger</span></a>
+    <span class="household">The Alvarez Family &middot; Maya, Jordan, Leo and Sofia</span>
+    <nav aria-label="Sections">
+      <a href="#/dashboard" data-route="dashboard">Dashboard</a>
+      <a href="#/transactions" data-route="transactions">Transactions</a>
+      <a href="#/budgets" data-route="budgets">Budgets</a>
+      <a href="#/bills" data-route="bills">Bills</a>
+      <a href="#/goals" data-route="goals">Goals</a>
+    </nav>
+  </div>
+</header>
+<main id="app"></main>
+<footer class="site-footer">
+  <p id="footer-note">November budget for the Alvarez family.</p>
+  <p>Your changes are saved in this browser only. <button type="button" id="reset-data">Reset to the sample month</button></p>
+</footer>
+</body>
+</html>
