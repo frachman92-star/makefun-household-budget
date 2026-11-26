@@ -1,169 +1,157 @@
-// HomeLedger app: loads the saved household budget, routes between the
-// five sections, and wires up every control. The state lives in
-// localStorage (see data.js); each change saves, then re-renders.
+// HomeLedger router and event wiring. Hash routes, localStorage persistence,
+// and window.__shotReady after every render so screenshots can wait for paint.
 
-import { loadState, saveState, resetState } from './data.js';
-import { drawCategoryBars, drawTrend } from './charts.js';
-import {
-  renderDashboard,
-  renderTransactions,
-  renderBudgets,
-  renderBills,
-  renderGoals,
-  spentByCategory,
-  totalIncome,
-  totalSpent,
-  money,
-} from './views.js';
+import { CATEGORIES, loadState, money, monthlyTrend, saveState, spentByCategory } from './data.js';
+import { drawCategoryChart, drawTrendChart } from './charts.js';
+import { billsView, budgetsView, dashboardView, goalsView, transactionsView } from './views.js';
 
-const app = document.getElementById('app');
-const navLinks = [...document.querySelectorAll('[data-route]')];
+const MONTH = '2026-11';
+const ROUTES = ['dashboard', 'transactions', 'budgets', 'bills', 'goals'];
+
 let state = loadState();
-let editingTxId = null;
+let editingId = null;
 
-function route() {
-  const hash = window.location.hash || '#/dashboard';
-  const parts = hash.replace(/^#\//, '').split('/');
-  const page = parts[0] || 'dashboard';
-  navLinks.forEach((link) => {
-    const target = link.getAttribute('data-route');
-    link.classList.toggle('active', target === page || (page === '' && target === 'dashboard'));
+const viewEl = document.getElementById('view');
+
+function currentRoute() {
+  const hash = window.location.hash.replace(/^#\/?/, '');
+  return ROUTES.includes(hash) ? hash : 'dashboard';
+}
+
+function render() {
+  // Clear the flag first so a wait for the new view cannot pass on the
+  // previous view's ready state (notably after a nav-link click, where the
+  // hashchange task may still be queued when the waiter starts polling).
+  window.__shotReady = false;
+  const route = currentRoute();
+  let html;
+  if (route === 'transactions') html = transactionsView(state, editingId);
+  else if (route === 'budgets') html = budgetsView(state);
+  else if (route === 'bills') html = billsView(state);
+  else if (route === 'goals') html = goalsView(state);
+  else html = dashboardView(state);
+
+  viewEl.innerHTML = html;
+
+  document.querySelectorAll('nav a[data-route]').forEach((a) => {
+    a.classList.toggle('active', a.dataset.route === route);
   });
-  let html = '';
-  if (page === 'transactions') html = renderTransactions(state, editingTxId);
-  else if (page === 'budgets') html = renderBudgets(state);
-  else if (page === 'bills') html = renderBills(state);
-  else if (page === 'goals') html = renderGoals(state);
-  else html = renderDashboard(state);
-  app.innerHTML = html;
-  if (page === 'dashboard' || page === '') {
-    const catCanvas = document.getElementById('cat-chart');
-    const trendCanvas = document.getElementById('trend-chart');
-    if (catCanvas) drawCategoryBars(catCanvas, state.categories, spentByCategory(state));
-    if (trendCanvas) drawTrend(trendCanvas, state.trend);
+
+  if (route === 'dashboard') {
+    const rows = CATEGORIES.map((c) => ({
+      label: c.label,
+      spent: spentByCategory(state, c.slug, MONTH),
+      budget: state.budgets[c.slug],
+    })).sort((a, b) => b.spent - a.spent);
+    drawCategoryChart(document.getElementById('cat-chart'), rows);
+    drawTrendChart(document.getElementById('trend-chart'), monthlyTrend());
   }
-  const footerNote = document.getElementById('footer-note');
-  if (footerNote) {
-    footerNote.textContent = 'November: ' + money(totalIncome(state)) + ' in, '
-      + money(totalSpent(state)) + ' out, '
-      + money(totalIncome(state) - totalSpent(state)) + ' left.';
-  }
+
   window.__shotReady = true;
-  window.scrollTo(0, 0);
 }
 
-function saveAndRender() {
-  saveState(state);
-  route();
-}
-
-function formValues(form) {
-  const values = {};
-  new FormData(form).forEach((value, key) => { values[key] = String(value).trim(); });
-  return values;
-}
-
-function newId(prefix) {
-  return prefix + Date.now().toString(36) + Math.floor(Math.random() * 1000).toString(36);
+function newTxId() {
+  return 'tx-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 10000);
 }
 
 document.addEventListener('submit', (event) => {
   const form = event.target;
-  if (!(form instanceof HTMLFormElement)) return;
   event.preventDefault();
-  const values = formValues(form);
 
   if (form.id === 'tx-form') {
-    const amount = Number(values.amount);
-    if (!values.description || !Number.isFinite(amount) || amount <= 0) return;
-    if (values.editId) {
-      const tx = state.transactions.find((t) => t.id === values.editId);
-      if (tx) {
-        tx.description = values.description;
-        tx.amount = amount;
-        tx.category = values.category;
-        tx.date = values.date;
-        tx.note = values.note;
+    const data = new FormData(form);
+    const description = String(data.get('description') || '').trim();
+    const amount = Number(data.get('amount'));
+    const category = String(data.get('category') || 'groceries');
+    const date = String(data.get('date') || '2026-11-26');
+    if (!description || !(amount > 0) || !date) return;
+    if (editingId) {
+      const existing = state.transactions.find((t) => t.id === editingId);
+      if (existing) {
+        existing.description = description;
+        existing.amount = amount;
+        existing.category = category;
+        existing.date = date;
       }
-      editingTxId = null;
+      editingId = null;
     } else {
-      state.transactions.push({
-        id: newId('t'),
-        date: values.date || '2026-11-26',
-        description: values.description,
-        category: values.category,
-        amount,
-        note: values.note,
-      });
+      state.transactions.push({ id: newTxId(), date, description, category, amount });
     }
-    saveAndRender();
-  } else if (form.id === 'bill-form') {
-    const amount = Number(values.amount);
-    const dueDay = Number(values.dueDay);
-    if (!values.name || !Number.isFinite(amount) || amount <= 0) return;
-    state.bills.push({
-      id: newId('b'),
-      name: values.name,
-      amount,
-      dueDay: Number.isFinite(dueDay) && dueDay >= 1 && dueDay <= 31 ? dueDay : 1,
-      paid: false,
-      note: values.note,
-    });
-    saveAndRender();
-  } else if (form.id === 'goal-form') {
-    const target = Number(values.target);
-    const saved = Number(values.saved) || 0;
-    if (!values.name || !Number.isFinite(target) || target <= 0) return;
-    state.goals.push({
-      id: newId('g'),
-      name: values.name,
-      target,
-      saved: Math.min(saved, target),
-      note: values.note,
-    });
-    saveAndRender();
-  } else if (form.classList.contains('budget-form')) {
-    const budget = Number(values.budget);
-    const cat = state.categories.find((c) => c.id === form.dataset.category);
-    if (cat && Number.isFinite(budget) && budget >= 0) cat.budget = budget;
-    saveAndRender();
-  } else if (form.classList.contains('goal-form')) {
-    const amount = Number(values.amount);
-    const goal = state.goals.find((g) => g.id === form.dataset.goal);
-    if (goal && Number.isFinite(amount) && amount > 0) goal.saved = Math.min(goal.target, goal.saved + amount);
-    saveAndRender();
+    saveState(state);
+    render();
+    return;
+  }
+
+  if (form.classList.contains('budget-form')) {
+    const slug = form.dataset.category;
+    const value = Number(new FormData(form).get('budget'));
+    if (slug && value >= 0) {
+      state.budgets[slug] = value;
+      saveState(state);
+      render();
+    }
+    return;
+  }
+
+  if (form.classList.contains('goal-form')) {
+    const goalId = form.dataset.goal;
+    const value = Number(new FormData(form).get('amount'));
+    const goal = state.goals.find((g) => g.id === goalId);
+    if (goal && value > 0) {
+      goal.saved = Math.round((goal.saved + value) * 100) / 100;
+      saveState(state);
+      render();
+    }
+    return;
   }
 });
 
 document.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-action]');
-  if (button) {
-    const action = button.dataset.action;
-    const id = button.dataset.id;
-    if (action === 'delete-tx') {
-      state.transactions = state.transactions.filter((t) => t.id !== id);
-      if (editingTxId === id) editingTxId = null;
-      saveAndRender();
-    } else if (action === 'edit-tx') {
-      editingTxId = id;
-      route();
-      const form = document.getElementById('tx-form');
-      if (form) form.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } else if (action === 'toggle-bill') {
-      const bill = state.bills.find((b) => b.id === id);
-      if (bill) bill.paid = !bill.paid;
-      saveAndRender();
+  const button = event.target.closest('button[data-action]');
+  if (!button) return;
+  const action = button.dataset.action;
+  const id = button.dataset.id;
+
+  if (action === 'delete-tx') {
+    state.transactions = state.transactions.filter((t) => t.id !== id);
+    if (editingId === id) editingId = null;
+    saveState(state);
+    render();
+  } else if (action === 'edit-tx') {
+    editingId = id;
+    render();
+    const field = document.querySelector('#tx-form input[name="description"]');
+    if (field) field.focus();
+  } else if (action === 'cancel-edit') {
+    editingId = null;
+    render();
+  } else if (action === 'toggle-bill') {
+    const bill = state.bills.find((b) => b.id === id);
+    if (bill) {
+      bill.paid = !bill.paid;
+      saveState(state);
+      render();
     }
-    return;
-  }
-  const reset = event.target.closest('#reset-data');
-  if (reset) {
-    state = resetState();
-    editingTxId = null;
-    saveAndRender();
   }
 });
 
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => {
+  editingId = null;
+  render();
+});
 
-route();
+// Drop the ready flag the moment a nav link is clicked, so a waiter that
+// starts polling before the hashchange task runs still waits for the new
+// view instead of passing on the old view's flag.
+document.querySelector('nav').addEventListener('click', (event) => {
+  if (event.target.closest('a[data-route]')) window.__shotReady = false;
+});
+
+window.addEventListener('resize', () => {
+  if (currentRoute() === 'dashboard') render();
+});
+
+render();
+
+// Keep the money helper reachable for debugging from the console.
+window.__homeledger = { money };

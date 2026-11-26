@@ -1,119 +1,94 @@
-// HomeLedger charts: plain canvas drawings, no chart library.
-// drawCategoryBars shows spent vs budget per category; drawTrend shows
-// income vs spending over the last six months. Both scale to the canvas
-// size and to the device pixel ratio so they stay sharp on a phone.
+// Canvas charts for HomeLedger. Plain 2D canvas, no libraries, no network.
+
+const BAR_COLOR = '#2e7d6b';
+const BAR_COLOR_OVER = '#b4452f';
+const TREND_COLOR = '#2e7d6b';
+const GRID_COLOR = '#e3e6e1';
+const TEXT_COLOR = '#5a615c';
 
 function setupCanvas(canvas) {
-  const ratio = window.devicePixelRatio || 1;
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  canvas.width = Math.max(1, Math.round(width * ratio));
-  canvas.height = Math.max(1, Math.round(height * ratio));
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || canvas.width;
+  const h = canvas.clientHeight || canvas.height;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
   const ctx = canvas.getContext('2d');
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  return { ctx, width, height };
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h };
 }
 
-function moneyShort(value) {
-  if (value >= 1000) return '$' + (value / 1000).toFixed(1) + 'k';
-  return '$' + Math.round(value);
+function niceMax(value) {
+  const step = value > 1000 ? 500 : value > 100 ? 100 : 50;
+  return Math.ceil(value / step) * step;
 }
 
-export function drawCategoryBars(canvas, categories, spentByCategory) {
-  const { ctx, width, height } = setupCanvas(canvas);
-  ctx.clearRect(0, 0, width, height);
-  const rows = categories.filter((c) => c.id !== 'savings');
-  const maxValue = Math.max(...rows.map((c) => Math.max(c.budget, spentByCategory[c.id] || 0)), 1);
+// Horizontal bars: one per category, longest bar is the biggest spender.
+export function drawCategoryChart(canvas, rows) {
+  if (!canvas) return;
+  const { ctx, w, h } = setupCanvas(canvas);
+  ctx.clearRect(0, 0, w, h);
+  const labelW = 96;
   const top = 8;
-  const bottom = 22;
-  const rowHeight = (height - top - bottom) / rows.length;
-  const labelWidth = 86;
-  const rightMargin = 88;
-  const barArea = width - labelWidth - rightMargin;
-
-  ctx.font = '11px system-ui, sans-serif';
-  rows.forEach((cat, i) => {
-    const y = top + i * rowHeight;
-    const barY = y + 5;
-    const barH = Math.max(8, rowHeight - 16);
-    const spent = spentByCategory[cat.id] || 0;
-    const over = spent > cat.budget;
-    ctx.fillStyle = '#33413c';
+  const bottom = 8;
+  const gap = 6;
+  const barH = Math.min(24, (h - top - bottom - gap * (rows.length - 1)) / rows.length);
+  const max = niceMax(Math.max(...rows.map((r) => r.spent), 1));
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  rows.forEach((row, i) => {
+    const y = top + i * (barH + gap);
+    ctx.fillStyle = TEXT_COLOR;
+    ctx.textAlign = 'right';
+    ctx.fillText(row.label, labelW - 8, y + barH / 2);
+    const barW = ((w - labelW - 64) * row.spent) / max;
+    ctx.fillStyle = row.spent > row.budget ? BAR_COLOR_OVER : BAR_COLOR;
+    ctx.beginPath();
+    ctx.roundRect(labelW, y, Math.max(barW, 2), barH, 4);
+    ctx.fill();
+    ctx.fillStyle = '#33413a';
     ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(cat.name, 0, barY + barH / 2);
-    // Budget bar (pale) with the spent bar (solid) on top of it.
-    ctx.fillStyle = '#e3e8e2';
-    ctx.fillRect(labelWidth, barY, barArea, barH);
-    ctx.fillStyle = over ? '#c05b5b' : cat.color;
-    ctx.fillRect(labelWidth, barY, (barArea * Math.min(spent, maxValue)) / maxValue, barH);
-    ctx.fillStyle = '#5a6b63';
-    ctx.textAlign = 'left';
-    ctx.fillText(moneyShort(spent) + ' / ' + moneyShort(cat.budget), labelWidth + barArea + 6, barY + barH / 2);
+    ctx.fillText('$' + Math.round(row.spent).toLocaleString('en-US'), labelW + barW + 8, y + barH / 2);
   });
-  ctx.fillStyle = '#8a978f';
-  ctx.textAlign = 'left';
-  ctx.fillText('Spent vs budget, November', 0, height - 8);
 }
 
-export function drawTrend(canvas, trend) {
-  const { ctx, width, height } = setupCanvas(canvas);
-  ctx.clearRect(0, 0, width, height);
-  const top = 14;
-  const bottom = 24;
+// Vertical bars: monthly spending, June through November.
+export function drawTrendChart(canvas, months) {
+  if (!canvas) return;
+  const { ctx, w, h } = setupCanvas(canvas);
+  ctx.clearRect(0, 0, w, h);
   const left = 44;
-  const right = 8;
-  const plotW = width - left - right;
-  const plotH = height - top - bottom;
-  const maxValue = Math.max(...trend.map((t) => Math.max(t.income, t.spent)), 1) * 1.08;
-
+  const right = 12;
+  const top = 14;
+  const bottom = 26;
+  const plotW = w - left - right;
+  const plotH = h - top - bottom;
+  const max = niceMax(Math.max(...months.map((m) => m.spent)));
   ctx.font = '11px system-ui, sans-serif';
-  ctx.fillStyle = '#8a978f';
-  ctx.textAlign = 'right';
-  [0, 0.5, 1].forEach((f) => {
-    const y = top + plotH * (1 - f);
-    ctx.fillText(moneyShort(maxValue * f), left - 6, y + 4);
-    ctx.strokeStyle = '#e8ede8';
+  ctx.textBaseline = 'middle';
+  for (let g = 0; g <= 4; g++) {
+    const value = (max * g) / 4;
+    const y = top + plotH - (plotH * g) / 4;
+    ctx.strokeStyle = GRID_COLOR;
     ctx.beginPath();
     ctx.moveTo(left, y);
-    ctx.lineTo(width - right, y);
+    ctx.lineTo(w - right, y);
     ctx.stroke();
-  });
-
-  function line(values, color) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    values.forEach((v, i) => {
-      const x = left + (plotW * i) / (values.length - 1);
-      const y = top + plotH * (1 - v / maxValue);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-    ctx.fillStyle = color;
-    values.forEach((v, i) => {
-      const x = left + (plotW * i) / (values.length - 1);
-      const y = top + plotH * (1 - v / maxValue);
-      ctx.beginPath();
-      ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-    });
+    ctx.fillStyle = TEXT_COLOR;
+    ctx.textAlign = 'right';
+    ctx.fillText('$' + Math.round(value).toLocaleString('en-US'), left - 6, y);
   }
-
-  line(trend.map((t) => t.income), '#2e6f5e');
-  line(trend.map((t) => t.spent), '#e07856');
-
-  ctx.fillStyle = '#33413c';
-  ctx.textAlign = 'center';
-  trend.forEach((t, i) => {
-    const x = left + (plotW * i) / (trend.length - 1);
-    ctx.fillText(t.month, x, height - 8);
+  const slot = plotW / months.length;
+  const barW = Math.min(44, slot * 0.55);
+  months.forEach((m, i) => {
+    const barH = (plotH * m.spent) / max;
+    const x = left + i * slot + (slot - barW) / 2;
+    const y = top + plotH - barH;
+    ctx.fillStyle = i === months.length - 1 ? '#1f5c4e' : TREND_COLOR;
+    ctx.beginPath();
+    ctx.roundRect(x, y, barW, barH, 4);
+    ctx.fill();
+    ctx.fillStyle = TEXT_COLOR;
+    ctx.textAlign = 'center';
+    ctx.fillText(m.month, left + i * slot + slot / 2, top + plotH + 14);
   });
-
-  ctx.textAlign = 'left';
-  ctx.fillStyle = '#2e6f5e';
-  ctx.fillText('Income', width - 132, 10);
-  ctx.fillStyle = '#e07856';
-  ctx.fillText('Spending', width - 70, 10);
 }
